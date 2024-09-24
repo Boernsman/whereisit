@@ -3,9 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="X-UA-Compatible" content="IE=edge">
-  <title>NUPNP</title>
-  <link rel="icon" type="image/png" href="/favicon.png">
+  <title>WHEREISIT</title>
   <link rel="stylesheet" media="screen" href="normalize.min.css">
   <link rel="stylesheet" href="font-awesome-4.6.3/css/font-awesome.min.css">
   <link rel="stylesheet" type="text/css" href="bulma-0.1.2/css/bulma.css"/>
@@ -16,18 +14,6 @@
 <section class="hero is-primary is-medium is-bold">
   <div class="hero-head">
     <header class="nav">
-      <div class="container">
-        <div class="nav-left">
-          <a class="nav-item is-brand" href="/">
-            <img src="logo.png" alt="Logo">
-          </a>
-        </div>
-        <span class="nav-toggle">
-          <span></span>
-          <span></span>
-        </span>
-        </div>
-      </div>
     </header>
   </div>
 </section>
@@ -37,7 +23,8 @@
       <h1 class="title">Devices inside your network</h1>
       <template class="device-template">
         <li class="device-container">
-          <span class="device-name"></span> is on
+          <span class="device-name"></span> with ID
+          <span class="device-id"></span> is on
           <a class="device-link" href=""></a>
         </li>
       </template>
@@ -54,19 +41,6 @@
         Any entry gets deleted after <strong>24h</strong> and can only be accessed by the <strong>same</strong> internet connection which registered it.
       </p>
       <br>
-
-      <p>To register a device for 24h:</p>
-      <p>
-        <pre><code class="bash">curl -H "Content-Type: application/json" -X POST -d '{"name":"Devicename","address":"192.168.1.XX"}' https://nupnp.com/api/register</code></pre>
-      <p>
-      </p>
-      <br>
-      <p>To register a device, add this to crontab:</p>
-        <pre><code class="bash">@reboot sleep 10 && /usr/bin/curl -H "Content-Type: application/json" -X POST -d "{\"name\":\"$(hostname)\",\"address\":\"$(hostname -I | cut -d' ' -f1)\"}" https://nupnp.com/api/register
-          @daily /usr/bin/curl -H "Content-Type: application/json" -X POST -d "{\"name\":\"$(hostname)\",\"address\":\"$(hostname -I | cut -d' ' -f1)\"}" https://nupnp.com/api/register</code></pre>
-      <br>
-      </p>
-
     </div>
   </section>
 

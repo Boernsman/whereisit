@@ -1,18 +1,23 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
+	"flag"
 	"fmt"
-    "flag"
-    "log"
+	"log"
+	"log/slog"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
-)
 
-const lifetime time.Duration = 24 * time.Hour
+	"github.com/gorilla/mux"
+	"gopkg.in/ini.v1"
+)
 
 var devices struct {
 	sync.Mutex
@@ -20,95 +25,296 @@ var devices struct {
 }
 
 type Device struct {
-	ExternalAddress string    `json:"-"`
-	InternalAddress string    `json:"internaladdress"`
-	Port            int       `json:"port,omitempty"` // optional
-	Name            string    `json:"name"`
-    Tags            map[string]string `json:"tags,omitempty"`
-	Added           time.Time `json:"added"`
+	ExternalAddress string            `json:"-"`
+	InternalAddress string            `json:"address"`
+	Identifier      string            `json:"id"` // e.g. serial number
+	Name            string            `json:"name"`
+	Tags            map[string]string `json:"tags,omitempty"` // optional
+	Added           time.Time         `json:"added"`
+}
+
+type Credentials struct {
+	Username string
+	Password string
+	APIKey   string
+}
+
+func LoadCredentials(primaryPath, fallbackPath string) (*Credentials, error) {
+	// Check if the primary file exists
+	if _, err := os.Stat(primaryPath); os.IsNotExist(err) {
+		log.Printf("Primary file %s not found, trying fallback file %s\n", primaryPath, fallbackPath)
+		// If primary does not exist, check if fallback exists
+		if _, err := os.Stat(fallbackPath); os.IsNotExist(err) {
+			return nil, fmt.Errorf("neither %s nor %s were found", primaryPath, fallbackPath)
+		}
+		primaryPath = fallbackPath // Switch to fallback
+	}
+
+	cfg, err := ini.Load(primaryPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load ini file: %w", err)
+	}
+
+	username := cfg.Section("auth").Key("username").String()
+	password := cfg.Section("auth").Key("password").String()
+	apiKey := cfg.Section("api").Key("api_key").String()
+
+	if username == "" || password == "" || apiKey == "" {
+		return nil, fmt.Errorf("missing required credentials in ini file")
+	}
+
+	return &Credentials{
+		Username: username,
+		Password: password,
+		APIKey:   apiKey,
+	}, nil
 }
 
 func main() {
-    publicFolder := flag.String("public", "./public/", "Folder with the public files")
-    httpPort := flag.String("http-port", "8180", "Port for the HTTP server")
 
-    devices.d = make([]Device, 0)
+	primaryIniFilePath := "/etc/whereisit.ini"
+	fallbackIniFilePath := "./whereisit.ini"
 
-	http.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {})
-	http.HandleFunc("/api/register", RegisterDevice)
-	http.HandleFunc("/api/devices", ListDevices)
-	http.Handle("/", http.FileServer(http.Dir(*publicFolder)))
+	credentials, err := LoadCredentials(primaryIniFilePath, fallbackIniFilePath)
+	if err != nil {
+		log.Fatalf("Error loading credentials: %v", err)
+	}
 
-	go cleanup()
+	publicFolder := flag.String("public", "./public/", "Folder with the public files")
+	httpPort := flag.String("http-port", "8180", "Port for the HTTP server")
+	l := flag.Int("lifetime", 24, "Device entry lifetime in hours")
+	v := flag.Bool("verbose", false, "Enable verbose logging")
 
-	fmt.Println("Listen on port", httpPort)
-	// Note: use TLS
-    log.Fatal(http.ListenAndServe(":" + *httpPort, nil))
+	// Parse the command-line flags
+	flag.Parse()
+	fmt.Println("Listen on port", *httpPort)
+	fmt.Println("Using public folder", *publicFolder)
+	fmt.Println("Lifetime in hours:", *l)
+
+	// Check if the pubic folder exists
+	if _, err := os.Stat(*publicFolder); os.IsNotExist(err) {
+		slog.Error("Publich folder does not exist")
+		os.Exit(1)
+	}
+
+	devices.d = make([]Device, 0)
+
+	r := mux.NewRouter()
+	apiRouter := r.PathPrefix("/api").Subrouter()
+	if *v {
+		fmt.Println("Verbose logging enabled")
+		slog.SetLogLoggerLevel(slog.LevelDebug)
+		apiRouter.Use(logRequest)
+	}
+	apiRouter.Use(KeyAuth(credentials.APIKey))
+	apiRouter.Use(BasicAuthMiddleware(credentials.Username, credentials.Password))
+	apiRouter.HandleFunc("/register", RegisterDevice).Methods("POST")
+	apiRouter.HandleFunc("/devices", ListDevices).Methods("GET")
+	apiRouter.HandleFunc("/alldevices", ListAllDevices).Methods("GET")
+
+	spa := spaHandler{staticPath: *publicFolder, indexPath: "index.html"}
+	r.PathPrefix("/").Handler(spa)
+
+	lifetime := time.Duration(*l) * time.Hour
+	go cleanup(lifetime)
+
+	srv := &http.Server{
+		Handler:      r,
+		Addr:         "0.0.0.0:" + *httpPort,
+		WriteTimeout: 15 * time.Second,
+		ReadTimeout:  15 * time.Second,
+	}
+	log.Fatal(srv.ListenAndServe())
 }
 
-func findDevice(ia string, ea string) (int, bool) {
+type spaHandler struct {
+	staticPath string
+	indexPath  string
+}
+
+func (h spaHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Join internally call path.Clean to prevent directory traversal
+	path := filepath.Join(h.staticPath, r.URL.Path)
+
+	// check whether a file exists or is a directory at the given path
+	fi, err := os.Stat(path)
+	if os.IsNotExist(err) || fi.IsDir() {
+		// file does not exist or path is a directory, serve index.html
+		http.ServeFile(w, r, filepath.Join(h.staticPath, h.indexPath))
+		return
+	}
+
+	if err != nil {
+		// if we got an error (that wasn't that the file doesn't exist) stating the
+		// file, return a 500 internal server error and stop
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// otherwise, use http.FileServer to serve the static file
+	http.FileServer(http.Dir(h.staticPath)).ServeHTTP(w, r)
+}
+
+func logRequest(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ea, _, _ := net.SplitHostPort(r.RemoteAddr)
+		slog.Debug("Request", "path", r.URL.Path, "external ip", ea)
+		next.ServeHTTP(w, r)
+	})
+}
+
+func KeyAuth(apiKey string) mux.MiddlewareFunc {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			a := r.Header.Get("X-API-Key")
+			if a != apiKey {
+				http.Error(w, "Invalid or missing API key", http.StatusForbidden)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func BasicAuthMiddleware(username, password string) mux.MiddlewareFunc {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Get the Authorization header
+			authHeader := r.Header.Get("Authorization")
+			if authHeader == "" {
+				w.Header().Set("WWW-Authenticate", `Basic realm="Restricted"`)
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
+
+			// Check if the Authorization header is in "Basic" format
+			if !strings.HasPrefix(authHeader, "Basic ") {
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
+
+			// Decode the Base64 encoded username and password
+			encodedCredentials := strings.TrimPrefix(authHeader, "Basic ")
+			decodedCredentials, err := base64.StdEncoding.DecodeString(encodedCredentials)
+			if err != nil {
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
+
+			// Split the decoded credentials (format: "username:password")
+			credentials := strings.SplitN(string(decodedCredentials), ":", 2)
+			if len(credentials) != 2 {
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
+
+			// Compare the provided credentials with the expected ones
+			providedUsername := credentials[0]
+			providedPassword := credentials[1]
+
+			if providedUsername != username || providedPassword != password {
+				w.Header().Set("WWW-Authenticate", `Basic realm="Restricted"`)
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
+
+			// If authentication is successful, proceed to the next handler
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func findDeviceByIdentifier(id string, ea string) (int, bool) {
+
+	if isLocalNetwork(ea) {
+		ea = "local"
+	}
+
 	for i, d := range devices.d {
-		if d.InternalAddress == ia && d.ExternalAddress == ea {
+		if d.Identifier == id && d.ExternalAddress == ea {
 			return i, true
 		}
 	}
-	return -1, false
+	return 0, false
 }
 
 func devicesFor(ea string) []Device {
+
+	if isLocalNetwork(ea) {
+		ea = "local"
+	}
 	found := []Device{}
 	for _, d := range devices.d {
 		if d.ExternalAddress == ea {
 			found = append(found, d)
 		}
 	}
+	slog.Debug("Devices for", "external address", ea, "count", len(found))
 	return found
+}
+
+func addDevice(ea string, ia string, id string, name string, tags map[string]string) {
+
+	slog.Debug("Add device", "external address", ea, "internal address", ia, "name", name)
+	if isLocalNetwork(ea) {
+		ea = "local"
+	}
+
+	devices.d = append(devices.d, Device{
+		ExternalAddress: ea,
+		InternalAddress: ia,
+		Identifier:      id,
+		Name:            name,
+		Tags:            tags,
+		Added:           time.Now(),
+	})
 }
 
 func RegisterDevice(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("Content-Type") != "application/json" {
-		http.Error(w, "Please send json", 400)
+		slog.Debug("Content type is not JSON")
+		http.Error(w, "Content-Type must be application/json", 400)
 		return
 	}
 
 	if r.Body == nil {
-		http.Error(w, "Please send a request body", 400)
+		slog.Debug("Body did not contain any content")
+		http.Error(w, "No content", 400)
 		return
 	}
 
 	var t struct {
-		Name    string `json:"name"`
-		Address string `json:"address"`
-		Port    int    `json:"port"`
+		Name    string            `json:"name"`
+		Id      string            `json:"id"`
+		Address string            `json:"address"`
+		Tags    map[string]string `json:"tags,omitempty"`
 	}
 
 	err := json.NewDecoder(r.Body).Decode(&t)
 	if err != nil {
+		slog.Debug("JSON body could not be decoded", "error", err)
 		http.Error(w, err.Error(), 400)
 		return
 	}
 
 	t.Address = strings.Trim(t.Address, " ")
-
 	if net.ParseIP(t.Address) == nil {
+		slog.Debug("Internal address invalid", "address", t.Address)
 		http.Error(w, t.Address+" is not a valid IP address", http.StatusBadRequest)
 		return
 	}
 
 	// Prevent simple loopback mistake
 	if t.Address == "127.0.0.1" || t.Address == "::1" {
+		slog.Debug("Device loopback is not allowed")
 		http.Error(w, `Loopback is not allowed`, http.StatusBadRequest)
 		return
 	}
 
-	if net.ParseIP(t.Address) == nil {
-		http.Error(w, `"address" is not a valid IP address`, http.StatusBadRequest)
-		return
-	}
-
-	// TODO: validate parameter name required and no html/js
+	// Get the external address
 	ea, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
+		slog.Debug("Remote address invalid", "address", r.RemoteAddr)
 		http.NotFound(w, r)
 		return
 	}
@@ -116,55 +322,49 @@ func RegisterDevice(w http.ResponseWriter, r *http.Request) {
 	// Check if proxy was configured.
 	if ea == "127.0.0.1" {
 		xrealip := r.Header.Get("x-real-ip")
-		if xrealip != "" {
-			ea = xrealip
-		} else {
-			log.Println("127.0.0.1 tried to add an address, this can happen when proxy is not configured correctly.")
+		if xrealip == "" {
+			slog.Debug("127.0.0.1 tried to add an address, this can happen when proxy is not configured correctly.")
 			http.Error(w, `Host 127.0.0.1 is not allowed to register devices`, http.StatusBadRequest)
 			http.NotFound(w, r)
 			return
 		}
+		ea = xrealip
 	}
 
 	devices.Lock()
 	defer devices.Unlock()
 
-	if i, ok := findDevice(t.Address, ea); ok {
+	if i, ok := findDeviceByIdentifier(t.Id, ea); ok {
 		devices.d[i].Name = t.Name
-		devices.d[i].Port = t.Port
+		devices.d[i].InternalAddress = t.Address
+		devices.d[i].Tags = t.Tags
 		devices.d[i].Added = time.Now()
-		log.Println(time.Now(), "updated", t.Address)
+		slog.Debug("Device updated", "address", t.Address)
 	} else {
-		devices.d = append(devices.d, Device{
-			ExternalAddress: ea,
-			InternalAddress: t.Address,
-			Port:            t.Port,
-			Name:            t.Name,
-			Added:           time.Now(),
-		})
-		log.Println(time.Now(), "added", t.Address)
+		addDevice(ea, t.Address, t.Id, t.Name, t.Tags)
+		slog.Debug("Device added", "address", t.Address)
 	}
-
 	fmt.Fprintf(w, "Successfully added!\n")
 }
 
 func ListDevices(w http.ResponseWriter, r *http.Request) {
 	ea, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
+		slog.Debug("Remote address not available")
 		http.NotFound(w, r)
 		return
 	}
 
 	// Check if proxy was configured.
 	if ea == "127.0.0.1" {
+		slog.Debug("127.0.0.1 tried to access an address.")
 		xrealip := r.Header.Get("x-real-ip")
-		if xrealip != "" {
-			ea = xrealip
-		} else {
-			log.Println("127.0.0.1 tried to access an address.")
+		if xrealip == "" {
+			slog.Debug("x-real-ip header is not set")
 			http.NotFound(w, r)
 			return
 		}
+		ea = xrealip
 	}
 
 	devices.Lock()
@@ -177,7 +377,15 @@ func ListDevices(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func cleanup() {
+func ListAllDevices(w http.ResponseWriter, r *http.Request) {
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(devices.d); err != nil {
+		panic(err)
+	}
+}
+
+func cleanup(lifetime time.Duration) {
 	for {
 		time.Sleep(time.Second * 5)
 		devices.Lock()
@@ -189,4 +397,35 @@ func cleanup() {
 		}
 		devices.Unlock()
 	}
+}
+
+func isLocalNetwork(ip string) bool {
+
+	// Parse the IP to ensure it's a valid one
+	parsedIP := net.ParseIP(ip)
+	if parsedIP == nil {
+		slog.Debug("Given IP string is not valid", "ip", ip)
+		return false
+	}
+
+	privateRanges := []string{
+		// Define LAN ranges IPv4
+		"10.0.0.0/8",     // Class A private network
+		"172.16.0.0/12",  // Class B private network
+		"192.168.0.0/16", // Class C private network
+
+		// Define private IPv6 address ranges
+		"fc00::/7",  // Unique local address range
+		"fe80::/10", // Link-local address range
+	}
+
+	// Check if the parsed IP falls within any of the private ranges
+	for _, cidr := range privateRanges {
+		_, privateNet, _ := net.ParseCIDR(cidr)
+		if privateNet.Contains(parsedIP) {
+			slog.Debug("Url is from a local area network:", "parsedIP", parsedIP)
+			return true
+		}
+	}
+	return false
 }

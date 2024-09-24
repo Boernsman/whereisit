@@ -15,21 +15,19 @@ if [[ $EUID -ne 0 ]]; then
    exit 1
 fi
 
-# Build the Go binary (Optional step, assuming Go is installed)
-echo "Building the Go binary..."
-go build -o "${WORKING_DIR}/${BINARY_NAME}"
+if systemctl is-active --quiet ${SERVICE_NAME}; then
+  echo "${SERVICE_NAME} is stopped."
+  systemctl stop ${SERVICE_NAME}
+fi
 
-# Copy the binary to /usr/local/bin/
 echo "Installing ${BINARY_NAME} binary to ${BINARY_INSTALL_PATH}"
 cp "${WORKING_DIR}/${BINARY_NAME}" "${BINARY_INSTALL_PATH}"
 
-# Check if the copy was successful
 if [[ $? -ne 0 ]]; then
     echo "Failed to install binary. Exiting."
     exit 1
 fi
 
-# Copy the static files to /var/www/whereisit/public
 echo "Creating web content directory at ${PUBLIC_DEST_DIR}"
 mkdir -p "${PUBLIC_DEST_DIR}"
 
@@ -51,8 +49,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=${BINARY_INSTALL_PATH}${BINARY_NAME} --public ${PUBLIC_DEST_DIR}
-WorkingDirectory=${PUBLIC_DEST_DIR}/../
+ExecStart=${BINARY_INSTALL_PATH}${BINARY_NAME} --http-port 80 --public ${PUBLIC_DEST_DIR}
 Restart=on-failure
 User=$USER_NAME
 Group=$USER_NAME

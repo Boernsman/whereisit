@@ -1,9 +1,3 @@
-
-// for IE 9,10,11
-if (!window.location.origin) {
-  window.location.origin = window.location.protocol + "//" + window.location.hostname + (window.location.port ? ':' + window.location.port: '');
-}
-
 document.addEventListener('DOMContentLoaded', setupUI);
 function setupUI() {
   listDevices();
@@ -28,6 +22,7 @@ function listDevices() {
       var devices = JSON.parse(this.response);
 
       if (devices.length === 0) {
+        console.log("No devices present")
         return;
       }
 
@@ -39,25 +34,24 @@ function listDevices() {
       });
 
       devices.forEach(function(l) {
+        console.log(l)
         var t = document.querySelector('.device-template');
         t.content.querySelector('.device-name').textContent = l.name;
-        t.content.querySelector('.device-link').textContent = l.internaladdress;
-        if (l.port) {
-          t.content.querySelector('.device-link').href = 'http://' + l.internaladdress + ':' + l.port;
-        } else {
-          t.content.querySelector('.device-link').href = 'http://' + l.internaladdress;
-        }
+        t.content.querySelector('.device-id').textContent = l.id;
+        t.content.querySelector('.device-link').textContent = l.address;
+        t.content.querySelector('.device-link').href = 'http://' + l.address;
+
         var clone = document.importNode(t.content, true);
         list.appendChild(clone);
       });
 
     } else {
-      // We reached our target server, but it returned an error
+      console.log("We reached our target server, but it returned an error")
     }
   };
 
   request.onerror = function() {
-    // There was a connection error of some sort
+    console.log("There was a connection error of some sort")
   };
 
   request.send();
@@ -67,11 +61,4 @@ function addTD(e, text) {
   var td = document.createElement('td');
   td.innerHTML = text;
   return e.appendChild(td);
-}
-
-function addIcon(e, icon) {
-  var i = document.createElement('i');
-  i.classList.add('fa');
-  i.classList.add('fa-' + icon);
-  return e.appendChild(i);
 }

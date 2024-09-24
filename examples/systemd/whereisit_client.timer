@@ -1,0 +1,13 @@
+[Unit]
+Description=whereistit client run every 2 hours
+
+[Service]
+ExecStart=/usr/local/bin/whereistit_client.sh
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=2h
+Persistent=true
+
+[Install]
+WantedBy=multi-user.target

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,12 +10,12 @@ import (
 )
 
 const (
-    successString string = "Successfully added!\n"
+	successString string = "Successfully added!\n"
 )
 
 func TestRegister(t *testing.T) {
 	// NOTE: I allow space in the address, so scripts are easier
-	body := bytes.NewBufferString("{\"name\":\"Testdevice\",\"address\":\"192.168.100.151 \"}")
+	body := bytes.NewBufferString("{\"name\":\"Testdevice\",\"id\":\"123456789\",\"address\":\"192.168.100.151 \"}")
 	req, err := http.NewRequest("POST", "/api/register", body)
 	if err != nil {
 		t.Fatal(err)
@@ -42,9 +43,29 @@ func TestRegister(t *testing.T) {
 	}
 }
 
-func TestRegisterWithPort(t *testing.T) {
-	body := bytes.NewBufferString("{\"name\":\"Testdevice\",\"address\":\"192.168.100.152\",\"port\":5000}")
-	req, err := http.NewRequest("POST", "/api/register", body)
+func TestRegisterWithTags(t *testing.T) {
+
+	type Device struct {
+		Name    string            `json:"name"`
+		Id      string            `json:"id"`
+		Address string            `json:"address"`
+		Tags    map[string]string `json:"tags"`
+	}
+
+	d := Device{
+		Name:    "test device",
+		Id:      "123456789",
+		Address: "192.168.1.143",
+		Tags: map[string]string{
+			"tag_0": "test_0",
+			"tag_1": "test_1",
+		},
+	}
+	var body bytes.Buffer
+	if err := json.NewEncoder(&body).Encode(d); err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequest("POST", "/api/register", &body)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +106,7 @@ func TestList(t *testing.T) {
 		t.Errorf("handler returned wrong status code: got %v - %v", status, rr.Body)
 	}
 
-	if !strings.HasPrefix(rr.Body.String(), `[{"internaladdress":"192.168.100.151","name":"Testdevice","added"`) {
+	if !strings.HasPrefix(rr.Body.String(), `[{"address":"192.168.1.143","id":"123456789","name":"test device","tags":{"tag_0":"test_0","tag_1":"test_1"},"added"`) {
 		t.Errorf("handler returned unexpected body: got %v", rr.Body.String())
 	}
 }
