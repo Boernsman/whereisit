@@ -9,8 +9,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-    
-    ""
 )
 
 const lifetime time.Duration = 24 * time.Hour

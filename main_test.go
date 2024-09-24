@@ -8,6 +8,10 @@ import (
 	"testing"
 )
 
+const (
+    successString string = "Successfully added!\n"
+)
+
 func TestRegister(t *testing.T) {
 	// NOTE: I allow space in the address, so scripts are easier
 	body := bytes.NewBufferString("{\"name\":\"Testdevice\",\"address\":\"192.168.100.151 \"}")
@@ -33,9 +37,8 @@ func TestRegister(t *testing.T) {
 	}
 
 	// Check the response body is what we expect.
-	expected := "Successfully added, visit https://nupnp.com for more.\n"
-	if rr.Body.String() != expected {
-		t.Errorf("handler returned unexpected body: got %v want %v", rr.Body.String(), expected)
+	if rr.Body.String() != successString {
+		t.Errorf("handler returned unexpected body: got %v want %v", rr.Body.String(), successString)
 	}
 }
 
@@ -60,9 +63,8 @@ func TestRegisterWithPort(t *testing.T) {
 	}
 
 	// Check the response body is what we expect.
-	expected := "Successfully added, visit https://nupnp.com for more.\n"
-	if rr.Body.String() != expected {
-		t.Errorf("handler returned unexpected body: got %v want %v", rr.Body.String(), expected)
+	if rr.Body.String() != successString {
+		t.Errorf("handler returned unexpected body: got %v want %v", rr.Body.String(), successString)
 	}
 }
 
