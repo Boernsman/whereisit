@@ -3,7 +3,8 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"log"
+    "flag"
+    "log"
 	"net"
 	"net/http"
 	"strings"
@@ -12,7 +13,6 @@ import (
 )
 
 const lifetime time.Duration = 24 * time.Hour
-const httpAddr = ":8180"
 
 var devices struct {
 	sync.Mutex
@@ -29,18 +29,21 @@ type Device struct {
 }
 
 func main() {
-	devices.d = make([]Device, 0)
+    publicFolder := flag.String("public", "./public/", "Folder with the public files")
+    httpPort := flag.String("http-port", "8180", "Port for the HTTP server")
+
+    devices.d = make([]Device, 0)
 
 	http.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {})
 	http.HandleFunc("/api/register", RegisterDevice)
 	http.HandleFunc("/api/devices", ListDevices)
-	http.Handle("/", http.FileServer(http.Dir("public")))
+	http.Handle("/", http.FileServer(http.Dir(*publicFolder)))
 
 	go cleanup()
 
-	fmt.Println("listen on", httpAddr)
+	fmt.Println("Listen on port", httpPort)
 	// Note: use TLS
-	log.Fatal(http.ListenAndServe(httpAddr, nil))
+    log.Fatal(http.ListenAndServe(":" + *httpPort, nil))
 }
 
 func findDevice(ia string, ea string) (int, bool) {
