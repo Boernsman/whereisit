@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+    
+    ""
 )
 
 const lifetime time.Duration = 24 * time.Hour
@@ -24,6 +26,7 @@ type Device struct {
 	InternalAddress string    `json:"internaladdress"`
 	Port            int       `json:"port,omitempty"` // optional
 	Name            string    `json:"name"`
+    Tags            map[string]string `json:"tags,omitempty"`
 	Added           time.Time `json:"added"`
 }
 
@@ -141,7 +144,7 @@ func RegisterDevice(w http.ResponseWriter, r *http.Request) {
 		log.Println(time.Now(), "added", t.Address)
 	}
 
-	fmt.Fprintf(w, "Successfully added, visit https://nupnp.com for more.\n")
+	fmt.Fprintf(w, "Successfully added!\n")
 }
 
 func ListDevices(w http.ResponseWriter, r *http.Request) {
@@ -157,7 +160,7 @@ func ListDevices(w http.ResponseWriter, r *http.Request) {
 		if xrealip != "" {
 			ea = xrealip
 		} else {
-			log.Println("127.0.0.1 tried to access an address, this can happen when proxy is not configured correctly.")
+			log.Println("127.0.0.1 tried to access an address.")
 			http.NotFound(w, r)
 			return
 		}

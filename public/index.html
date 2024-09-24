@@ -26,15 +26,6 @@
           <span></span>
           <span></span>
         </span>
-        <div class="nav-right nav-menu">
-          <span class="nav-item">
-            <a class="button is-primary is-inverted" href="https://github.com/yene/nupnp">
-              <span class="icon">
-                <i class="fa fa-github"></i>
-              </span>
-              <span>Github</span>
-            </a>
-          </span>
         </div>
       </div>
     </header>
@@ -70,7 +61,7 @@
       <p>
       </p>
       <br>
-      <p>To register a Raspberry Pi every night, add this to crontab:</p>
+      <p>To register a device, add this to crontab:</p>
         <pre><code class="bash">@reboot sleep 10 && /usr/bin/curl -H "Content-Type: application/json" -X POST -d "{\"name\":\"$(hostname)\",\"address\":\"$(hostname -I | cut -d' ' -f1)\"}" https://nupnp.com/api/register
           @daily /usr/bin/curl -H "Content-Type: application/json" -X POST -d "{\"name\":\"$(hostname)\",\"address\":\"$(hostname -I | cut -d' ' -f1)\"}" https://nupnp.com/api/register</code></pre>
       <br>
@@ -83,10 +74,7 @@
     <div class="container">
       <div class="content has-text-centered">
         <p>
-          <strong>NUPNP</strong> was made by <a href="https://yannickweiss.com">Yannick Weiss</a> for <a href="http://nomos-system.com">nomos-system</a>.
-        </p>
-        <p>
-          <i>"Not another fucking cloud service" - Richard S.</i>
+          <strong>WHEREISIT</strong>
         </p>
       </div>
     </div>
