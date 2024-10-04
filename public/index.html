@@ -1,58 +1,136 @@
-<!DOCTYPE HTML>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>WHEREISIT</title>
-  <link rel="stylesheet" media="screen" href="normalize.min.css">
-  <link rel="stylesheet" href="font-awesome-4.6.3/css/font-awesome.min.css">
-  <link rel="stylesheet" type="text/css" href="bulma-0.1.2/css/bulma.css"/>
-  <link rel="stylesheet" type="text/css" href="style.css"/>
-  <script src="main.js"></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Device List</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            background-color: #f4f4f9;
+        }
+        h1 {
+            text-align: center;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        table, th, td {
+            border: 1px solid #ddd;
+        }
+        th, td {
+            padding: 8px;
+            text-align: left;
+            color: #000000;
+        }
+        th {
+            background-color: #00000000;
+        }
+        .loading {
+            text-align: center;
+            color: #555;
+        }
+        footer {
+          text-align: center;
+          padding: 10px;
+          background: linear-gradient(to right, #ff9f0f, #fd6f10);
+          width: 100%;
+          position: fixed;
+          bottom: 0;
+          left: 0;
+        }
+        footer a {
+            color: white;
+            text-decoration: none;
+            font-weight: bold;
+        }
+        footer a:hover {
+            text-decoration: underline;
+        }
+    </style>
 </head>
 <body>
-<section class="hero is-primary is-medium is-bold">
-  <div class="hero-head">
-    <header class="nav">
-    </header>
-  </div>
-</section>
 
-  <section class="section" id="devices">
-    <div class="container">
-      <h1 class="title">Devices inside your network</h1>
-      <template class="device-template">
-        <li class="device-container">
-          <span class="device-name"></span> with ID
-          <span class="device-id"></span> is on
-          <a class="device-link" href=""></a>
-        </li>
-      </template>
-      <ul class="device-list">
-        <li>No devices registered.</li>
-      </ul>
-    </div>
-  </section>
+    <h1>Device List</h1>
+    <div id="loading" class="loading">Loading devices...</div>
+    <table id="deviceTable" style="display: none;">
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>ID</th>
+                <th>Address</th>
+                <th>Last Seen</th>
+                <th>Tags</th>
+            </tr>
+        </thead>
+        <tbody id="deviceTableBody">
+            <!-- Devices will be dynamically added here -->
+        </tbody>
+    </table>
 
-  <section class="section" id="register">
-    <div class="container">
-      <h1 class="title">Register</h1>
-      <p>
-        Any entry gets deleted after <strong>24h</strong> and can only be accessed by the <strong>same</strong> internet connection which registered it.
-      </p>
-      <br>
-    </div>
-  </section>
+    <footer>
+      <p><a href="https://github.com/Boernsman/whereisit" target="_blank">WHEREISIT</a></p>
+    </footer>
 
-  <footer class="footer">
-    <div class="container">
-      <div class="content has-text-centered">
-        <p>
-          <strong>WHEREISIT</strong>
-        </p>
-      </div>
-    </div>
-  </footer>
-
+    <script>
+      // Function to fetch devices from the backend with API key
+      async function fetchDevices() {
+          try {
+              const response = await fetch('/api/devices', {
+                  method: 'GET',
+                  headers: {
+                      'X-API-Key': 'your_api_key',
+                      'Content-Type': 'application/json'
+                  }
+              });
+  
+              if (!response.ok) {
+                  throw new Error('Network response was not ok');
+              }
+              const devices = await response.json(); // Parse JSON data from response
+              displayDevices(devices);
+          } catch (error) {
+              document.getElementById('loading').innerText = 'Failed to load devices.';
+              console.error('Error fetching devices:', error);
+          }
+      }
+  
+      // Function to display devices in the table
+      function displayDevices(devices) {
+          const tableBody = document.getElementById('deviceTableBody');
+          tableBody.innerHTML = ''; // Clear any existing rows
+  
+          devices.forEach(device => {
+              const row = document.createElement('tr');
+              
+              const idCell = document.createElement('td');
+              idCell.textContent = device.name;
+              row.appendChild(idCell);
+              
+              const nameCell = document.createElement('td');
+              nameCell.textContent = device.id;
+              row.appendChild(nameCell);
+  
+              const typeCell = document.createElement('td');
+              typeCell.textContent = device.address;
+              row.appendChild(typeCell);
+  
+              const statusCell = document.createElement('td');
+              statusCell.textContent = device.added;
+              row.appendChild(statusCell);
+  
+              tableBody.appendChild(row);
+          });
+  
+          document.getElementById('loading').style.display = 'none';
+          document.getElementById('deviceTable').style.display = 'table'; // Show the table
+      }
+  
+      // Fetch devices when the page loads
+      document.addEventListener('DOMContentLoaded', fetchDevices);
+  </script>
 </body>
 </html>

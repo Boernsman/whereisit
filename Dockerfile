@@ -19,6 +19,8 @@ RUN go build -o whereisit .
 # Use a smaller image for deployment
 FROM alpine:3.18
 
+WORKDIR /app
+
 # Install certificates for HTTPS
 RUN apk --no-cache add ca-certificates
 
@@ -26,14 +28,14 @@ RUN apk --no-cache add ca-certificates
 RUN mkdir -p /etc/ssl/certs && mkdir -p /etc/ssl/private
 
 # Copy the SSL certificates (adjust paths as necessary)
-COPY ./certs/server.crt /etc/ssl/certs/
-COPY ./certs/server.key /etc/ssl/private/
+COPY ./server.crt* /etc/ssl/certs/
+COPY ./server.key* /etc/ssl/private/
 
 # Copy the built Go binary from the builder
-COPY --from=builder /app/main /app/main
+COPY --from=builder /app/whereisit /app/whereisit
 
-# Expose HTTP on port 80 and HTTPS on port 443
-EXPOSE 80 443
+# Expose HTTP and HTTPS
+EXPOSE 8180 443
 
 # Command to run the executable
 CMD ["/app/whereisit"]

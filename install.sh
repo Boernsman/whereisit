@@ -1,8 +1,10 @@
 #!/bin/bash
 
 BINARY_NAME="whereisit"
+CONFIG_NAME="whereisit.ini"
 SERVICE_NAME="whereisit.service"
 BINARY_INSTALL_PATH="/usr/local/bin/"
+CONFIG_INSTALL_PATH="/etc/"
 SERVICE_INSTALL_PATH="/etc/systemd/system/"
 PUBLIC_SOURCE_DIR="./public"
 PUBLIC_DEST_DIR="/var/www/whereisit/public"
@@ -27,6 +29,9 @@ if [[ $? -ne 0 ]]; then
     echo "Failed to install binary. Exiting."
     exit 1
 fi
+
+echo "Installing ${CONFIG_NAME} to ${CONFIG_INSTALL_PATH}"
+cp "${WORKING_DIR}/${CONFIG_NAME}" "${CONFIG_INSTALL_PATH}"
 
 echo "Creating web content directory at ${PUBLIC_DEST_DIR}"
 mkdir -p "${PUBLIC_DEST_DIR}"

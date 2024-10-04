@@ -33,13 +33,15 @@ type Device struct {
 	Added           time.Time         `json:"added"`
 }
 
-type Credentials struct {
-	Username string
-	Password string
-	APIKey   string
+type Config struct {
+	BasicAuthEnabled  bool
+	Username          string
+	Password          string
+	ApiKeyAuthEnabled bool
+	APIKey            string
 }
 
-func LoadCredentials(primaryPath, fallbackPath string) (*Credentials, error) {
+func LoadConfiguration(primaryPath, fallbackPath string) (*Config, error) {
 	// Check if the primary file exists
 	if _, err := os.Stat(primaryPath); os.IsNotExist(err) {
 		log.Printf("Primary file %s not found, trying fallback file %s\n", primaryPath, fallbackPath)
@@ -55,19 +57,25 @@ func LoadCredentials(primaryPath, fallbackPath string) (*Credentials, error) {
 		return nil, fmt.Errorf("failed to load ini file: %w", err)
 	}
 
-	username := cfg.Section("auth").Key("username").String()
-	password := cfg.Section("auth").Key("password").String()
-	apiKey := cfg.Section("api").Key("api_key").String()
+	var config Config
 
-	if username == "" || password == "" || apiKey == "" {
-		return nil, fmt.Errorf("missing required credentials in ini file")
+	config.BasicAuthEnabled, _ = cfg.Section("basic_auth").Key("enabled").Bool()
+	if config.BasicAuthEnabled {
+		config.Username = cfg.Section("basic_auth").Key("username").String()
+		config.Password = cfg.Section("basic_auth").Key("password").String()
+
+		if config.Username == "" || config.Password == "" {
+			return nil, fmt.Errorf("missing required basic auth credentials in ini file")
+		}
 	}
-
-	return &Credentials{
-		Username: username,
-		Password: password,
-		APIKey:   apiKey,
-	}, nil
+	config.ApiKeyAuthEnabled, _ = cfg.Section("api").Key("api_key_enabled").Bool()
+	if config.ApiKeyAuthEnabled {
+		config.APIKey = cfg.Section("api").Key("api_key").String()
+		if config.APIKey == "" {
+			return nil, fmt.Errorf("missing required credentials in ini file")
+		}
+	}
+	return &config, nil
 }
 
 func main() {
@@ -75,7 +83,7 @@ func main() {
 	primaryIniFilePath := "/etc/whereisit.ini"
 	fallbackIniFilePath := "./whereisit.ini"
 
-	credentials, err := LoadCredentials(primaryIniFilePath, fallbackIniFilePath)
+	config, err := LoadConfiguration(primaryIniFilePath, fallbackIniFilePath)
 	if err != nil {
 		log.Fatalf("Error loading credentials: %v", err)
 	}
@@ -106,8 +114,12 @@ func main() {
 		slog.SetLogLoggerLevel(slog.LevelDebug)
 		apiRouter.Use(logRequest)
 	}
-	apiRouter.Use(KeyAuth(credentials.APIKey))
-	apiRouter.Use(BasicAuthMiddleware(credentials.Username, credentials.Password))
+	if config.ApiKeyAuthEnabled {
+		apiRouter.Use(KeyAuth(config.APIKey))
+	}
+	if config.BasicAuthEnabled {
+		apiRouter.Use(BasicAuthMiddleware(config.Username, config.Password))
+	}
 	apiRouter.HandleFunc("/register", RegisterDevice).Methods("POST")
 	apiRouter.HandleFunc("/devices", ListDevices).Methods("GET")
 	apiRouter.HandleFunc("/alldevices", ListAllDevices).Methods("GET")
@@ -312,23 +324,11 @@ func RegisterDevice(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get the external address
-	ea, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		slog.Debug("Remote address invalid", "address", r.RemoteAddr)
+	ea := getIPAddressFromRequest(r)
+	if ea == "" {
+		http.Error(w, `Host 127.0.0.1 is not allowed to register devices`, http.StatusBadRequest)
 		http.NotFound(w, r)
 		return
-	}
-
-	// Check if proxy was configured.
-	if ea == "127.0.0.1" {
-		xrealip := r.Header.Get("x-real-ip")
-		if xrealip == "" {
-			slog.Debug("127.0.0.1 tried to add an address, this can happen when proxy is not configured correctly.")
-			http.Error(w, `Host 127.0.0.1 is not allowed to register devices`, http.StatusBadRequest)
-			http.NotFound(w, r)
-			return
-		}
-		ea = xrealip
 	}
 
 	devices.Lock()
@@ -348,23 +348,12 @@ func RegisterDevice(w http.ResponseWriter, r *http.Request) {
 }
 
 func ListDevices(w http.ResponseWriter, r *http.Request) {
-	ea, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		slog.Debug("Remote address not available")
+	// Get the external address
+	ea := getIPAddressFromRequest(r)
+	if ea == "" {
+		http.Error(w, `Host 127.0.0.1 is not allowed to register devices`, http.StatusBadRequest)
 		http.NotFound(w, r)
 		return
-	}
-
-	// Check if proxy was configured.
-	if ea == "127.0.0.1" {
-		slog.Debug("127.0.0.1 tried to access an address.")
-		xrealip := r.Header.Get("x-real-ip")
-		if xrealip == "" {
-			slog.Debug("x-real-ip header is not set")
-			http.NotFound(w, r)
-			return
-		}
-		ea = xrealip
 	}
 
 	devices.Lock()
@@ -399,6 +388,31 @@ func cleanup(lifetime time.Duration) {
 	}
 }
 
+// Extracts the IP address from RemoteAddr, handling both IPv4 and IPv6
+func getIPAddressFromRequest(r *http.Request) string {
+
+	// For IPv6 addresses, RemoteAddr includes brackets around the IP and a zone identifier (e.g., %wlan0)
+	ip, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		slog.Debug("Could not split remote address into IP and port", "remote address", r.RemoteAddr)
+		return ""
+	}
+
+	// Split out any zone identifier in the IPv6 address (i.e., '%interface' like '%wlan0')
+	ip = strings.Split(ip, "%")[0]
+
+	// Check if proxy was configured.
+	if ip == "127.0.0.1" || ip == "::1" {
+		xrealip := r.Header.Get("x-real-ip")
+		if xrealip == "" {
+			slog.Debug("127.0.0.1 tried to add an address, this can happen when proxy is not configured correctly.")
+			return ""
+		}
+		ip = xrealip
+	}
+	return ip
+}
+
 func isLocalNetwork(ip string) bool {
 
 	// Parse the IP to ensure it's a valid one
@@ -413,10 +427,12 @@ func isLocalNetwork(ip string) bool {
 		"10.0.0.0/8",     // Class A private network
 		"172.16.0.0/12",  // Class B private network
 		"192.168.0.0/16", // Class C private network
+		"127.0.0.0/8",    // Loopback range
 
 		// Define private IPv6 address ranges
 		"fc00::/7",  // Unique local address range
 		"fe80::/10", // Link-local address range
+		"::1/128",   // Loopback range
 	}
 
 	// Check if the parsed IP falls within any of the private ranges
