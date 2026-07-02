@@ -39,17 +39,21 @@ type Config struct {
 	Password          string
 	ApiKeyAuthEnabled bool
 	APIKey            string
+	APIPort           string
+	UIPort            string
+	BrandName         string
+	BrandLink         string
+	BrandLogo         string
+	APIBaseURL        string // URL of API as seen from the browser, for cross-port setups
 }
 
 func LoadConfiguration(primaryPath, fallbackPath string) (*Config, error) {
-	// Check if the primary file exists
 	if _, err := os.Stat(primaryPath); os.IsNotExist(err) {
 		log.Printf("Primary file %s not found, trying fallback file %s\n", primaryPath, fallbackPath)
-		// If primary does not exist, check if fallback exists
 		if _, err := os.Stat(fallbackPath); os.IsNotExist(err) {
 			return nil, fmt.Errorf("neither %s nor %s were found", primaryPath, fallbackPath)
 		}
-		primaryPath = fallbackPath // Switch to fallback
+		primaryPath = fallbackPath
 	}
 
 	cfg, err := ini.Load(primaryPath)
@@ -75,7 +79,22 @@ func LoadConfiguration(primaryPath, fallbackPath string) (*Config, error) {
 			return nil, fmt.Errorf("missing required credentials in ini file")
 		}
 	}
+
+	config.APIPort = cfg.Section("api").Key("port").MustString("8180")
+	config.UIPort = cfg.Section("ui").Key("port").MustString("8181")
+	config.BrandName = cfg.Section("ui").Key("name").MustString("WHEREISIT")
+	config.BrandLink = cfg.Section("ui").Key("link").MustString("https://github.com/bitcrushtesting/whereisit")
+	config.BrandLogo = cfg.Section("ui").Key("logo").String()
+	config.APIBaseURL = cfg.Section("ui").Key("api_url").String()
+
 	return &config, nil
+}
+
+type BrandingResponse struct {
+	Name   string `json:"name"`
+	Link   string `json:"link"`
+	Logo   string `json:"logo"`
+	APIUrl string `json:"apiUrl"`
 }
 
 func main() {
@@ -89,54 +108,82 @@ func main() {
 	}
 
 	publicFolder := flag.String("public", "./public/", "Folder with the public files")
-	httpPort := flag.String("http-port", "8180", "Port for the HTTP server")
+	apiPort := flag.String("api-port", config.APIPort, "Port for the API server")
+	uiPort := flag.String("ui-port", config.UIPort, "Port for the UI server")
 	l := flag.Int("lifetime", 24, "Device entry lifetime in hours")
 	v := flag.Bool("verbose", false, "Enable verbose logging")
 
-	// Parse the command-line flags
 	flag.Parse()
-	fmt.Println("Listen on port", *httpPort)
+	fmt.Println("API server on port", *apiPort)
+	fmt.Println("UI server on port", *uiPort)
 	fmt.Println("Using public folder", *publicFolder)
 	fmt.Println("Lifetime in hours:", *l)
 
-	// Check if the pubic folder exists
 	if _, err := os.Stat(*publicFolder); os.IsNotExist(err) {
-		slog.Error("Publich folder does not exist")
+		slog.Error("Public folder does not exist")
 		os.Exit(1)
+	}
+
+	if *v {
+		fmt.Println("Verbose logging enabled")
+		slog.SetLogLoggerLevel(slog.LevelDebug)
 	}
 
 	devices.d = make([]Device, 0)
 
-	r := mux.NewRouter()
-	apiRouter := r.PathPrefix("/api").Subrouter()
+	// API server — handles device registration and queries
+	apiR := mux.NewRouter()
+	apiR.Use(corsMiddleware)
+	apiRoutes := apiR.PathPrefix("/api").Subrouter()
 	if *v {
-		fmt.Println("Verbose logging enabled")
-		slog.SetLogLoggerLevel(slog.LevelDebug)
-		apiRouter.Use(logRequest)
+		apiRoutes.Use(logRequest)
 	}
 	if config.ApiKeyAuthEnabled {
-		apiRouter.Use(KeyAuth(config.APIKey))
+		apiRoutes.Use(KeyAuth(config.APIKey))
 	}
 	if config.BasicAuthEnabled {
-		apiRouter.Use(BasicAuthMiddleware(config.Username, config.Password))
+		apiRoutes.Use(BasicAuthMiddleware(config.Username, config.Password))
 	}
-	apiRouter.HandleFunc("/register", RegisterDevice).Methods("POST")
-	apiRouter.HandleFunc("/devices", ListDevices).Methods("GET")
-	apiRouter.HandleFunc("/alldevices", requireAuth(config, ListAllDevices)).Methods("GET")
+	apiRoutes.HandleFunc("/register", RegisterDevice).Methods("POST")
+	apiRoutes.HandleFunc("/devices", ListDevices).Methods("GET")
+	apiRoutes.HandleFunc("/alldevices", requireAuth(config, ListAllDevices)).Methods("GET")
+
+	apiSrv := &http.Server{
+		Handler:      apiR,
+		Addr:         "0.0.0.0:" + *apiPort,
+		WriteTimeout: 15 * time.Second,
+		ReadTimeout:  15 * time.Second,
+	}
+
+	// UI server — serves the management interface and branding config
+	uiR := mux.NewRouter()
+	uiR.HandleFunc("/branding", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(BrandingResponse{
+			Name:   config.BrandName,
+			Link:   config.BrandLink,
+			Logo:   config.BrandLogo,
+			APIUrl: config.APIBaseURL,
+		})
+	}).Methods("GET")
 
 	spa := spaHandler{staticPath: *publicFolder, indexPath: "index.html"}
-	r.PathPrefix("/").Handler(spa)
+	uiR.PathPrefix("/").Handler(spa)
+
+	uiSrv := &http.Server{
+		Handler:      uiR,
+		Addr:         "0.0.0.0:" + *uiPort,
+		WriteTimeout: 15 * time.Second,
+		ReadTimeout:  15 * time.Second,
+	}
 
 	lifetime := time.Duration(*l) * time.Hour
 	go cleanup(lifetime)
 
-	srv := &http.Server{
-		Handler:      r,
-		Addr:         "0.0.0.0:" + *httpPort,
-		WriteTimeout: 15 * time.Second,
-		ReadTimeout:  15 * time.Second,
-	}
-	log.Fatal(srv.ListenAndServe())
+	go func() {
+		log.Fatal(apiSrv.ListenAndServe())
+	}()
+	log.Fatal(uiSrv.ListenAndServe())
 }
 
 type spaHandler struct {
@@ -165,6 +212,19 @@ func (h spaHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// otherwise, use http.FileServer to serve the static file
 	http.FileServer(http.Dir(h.staticPath)).ServeHTTP(w, r)
+}
+
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-API-Key, Authorization")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func logRequest(next http.Handler) http.Handler {

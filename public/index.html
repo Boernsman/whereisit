@@ -46,9 +46,16 @@
             color: white;
             text-decoration: none;
             font-weight: bold;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
         }
         footer a:hover {
             text-decoration: underline;
+        }
+        footer img {
+            height: 20px;
+            vertical-align: middle;
         }
     </style>
 </head>
@@ -72,65 +79,105 @@
     </table>
 
     <footer>
-      <p><a href="https://github.com/bitcrushtesting/whereisit" target="_blank">WHEREISIT</a></p>
+      <p><a href="https://github.com/bitcrushtesting/whereisit" target="_blank" id="brand-link">
+        <span id="brand-name">WHEREISIT</span>
+      </a></p>
     </footer>
 
     <script>
-      // Function to fetch devices from the backend with API key
+      let apiBaseUrl = '';
+
+      async function fetchBranding() {
+          try {
+              const response = await fetch('/branding');
+              if (!response.ok) return;
+              const branding = await response.json();
+
+              if (branding.name) {
+                  document.title = branding.name;
+                  document.getElementById('brand-name').textContent = branding.name;
+              }
+
+              if (branding.link) {
+                  document.getElementById('brand-link').href = branding.link;
+              }
+
+              if (branding.logo) {
+                  const favicon = document.createElement('link');
+                  favicon.rel = 'icon';
+                  favicon.href = branding.logo;
+                  document.head.appendChild(favicon);
+
+                  const img = document.createElement('img');
+                  img.src = branding.logo;
+                  img.alt = '';
+                  const link = document.getElementById('brand-link');
+                  link.insertBefore(img, link.firstChild);
+              }
+
+              if (branding.apiUrl) {
+                  apiBaseUrl = branding.apiUrl.replace(/\/$/, '');
+              }
+          } catch (error) {
+              console.error('Error fetching branding:', error);
+          }
+      }
+
       async function fetchDevices() {
           try {
-              const response = await fetch('/api/devices', {
+              const response = await fetch(apiBaseUrl + '/api/devices', {
                   method: 'GET',
                   headers: {
                       'X-API-Key': 'your_api_key',
                       'Content-Type': 'application/json'
                   }
               });
-  
+
               if (!response.ok) {
                   throw new Error('Network response was not ok');
               }
-              const devices = await response.json(); // Parse JSON data from response
+              const devices = await response.json();
               displayDevices(devices);
           } catch (error) {
               document.getElementById('loading').innerText = 'Failed to load devices.';
               console.error('Error fetching devices:', error);
           }
       }
-  
-      // Function to display devices in the table
+
       function displayDevices(devices) {
           const tableBody = document.getElementById('deviceTableBody');
-          tableBody.innerHTML = ''; // Clear any existing rows
-  
+          tableBody.innerHTML = '';
+
           devices.forEach(device => {
               const row = document.createElement('tr');
-              
+
               const idCell = document.createElement('td');
               idCell.textContent = device.name;
               row.appendChild(idCell);
-              
+
               const nameCell = document.createElement('td');
               nameCell.textContent = device.id;
               row.appendChild(nameCell);
-  
+
               const typeCell = document.createElement('td');
               typeCell.textContent = device.address;
               row.appendChild(typeCell);
-  
+
               const statusCell = document.createElement('td');
               statusCell.textContent = device.added;
               row.appendChild(statusCell);
-  
+
               tableBody.appendChild(row);
           });
-  
+
           document.getElementById('loading').style.display = 'none';
-          document.getElementById('deviceTable').style.display = 'table'; // Show the table
+          document.getElementById('deviceTable').style.display = 'table';
       }
-  
-      // Fetch devices when the page loads
-      document.addEventListener('DOMContentLoaded', fetchDevices);
-  </script>
+
+      document.addEventListener('DOMContentLoaded', async () => {
+          await fetchBranding();
+          fetchDevices();
+      });
+    </script>
 </body>
 </html>

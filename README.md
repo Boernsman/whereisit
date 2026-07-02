@@ -24,13 +24,13 @@ Devices on your network periodically POST their hostname and IP to `/api/registe
 ### Docker
 
 ```sh
-docker run -p 8180:8180 ghcr.io/bitcrushtesting/whereisit:latest
+docker run -p 8180:8180 -p 8181:8181 ghcr.io/bitcrushtesting/whereisit:latest
 ```
 
 Override the configuration with a volume mount:
 
 ```sh
-docker run -p 8180:8180 \
+docker run -p 8180:8180 -p 8181:8181 \
   -v /path/to/whereisit.ini:/etc/whereisit.ini \
   ghcr.io/bitcrushtesting/whereisit:latest
 ```
@@ -44,6 +44,8 @@ curl -X POST http://${SERVER_IP}:8180/api/register \
   -H "Content-Type: application/json" \
   -d '{"name":"${DEVICE_NAME}","address":"${DEVICE_IP}"}'
 ```
+
+> The API runs on port `8180` by default. The web UI runs on port `8181`.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -69,7 +71,7 @@ GET http://${SERVER_IP}:8180/api/alldevices
 ### Web UI
 
 ```
-http://${SERVER_IP}:8180
+http://${SERVER_IP}:8181
 ```
 
 ## Configuration
@@ -83,15 +85,35 @@ username = admin
 password = admin
 
 [api]
+port            = 8180
 api_key_enabled = false
 api_key         = your_api_key
+
+[ui]
+port    = 8181
+name    = WHEREISIT
+link    = https://github.com/bitcrushtesting/whereisit
+logo    =
+; Set api_url when API and UI run on different hosts/ports, e.g. http://yourserver:8180
+api_url =
 ```
+
+### `[ui]` settings
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `port` | `8181` | Port the web UI listens on |
+| `name` | `WHEREISIT` | Brand name shown in the UI |
+| `link` | project URL | URL the brand name links to |
+| `logo` | _(none)_ | Path or URL to a logo image |
+| `api_url` | _(same host)_ | Override the API base URL as seen from the browser — needed when API and UI run on different ports behind a reverse proxy |
 
 ### Command-line flags
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--http-port` | `8180` | HTTP listen port |
+| `--api-port` | `8180` | Port for the API server |
+| `--ui-port` | `8181` | Port for the UI server |
 | `--public` | `./public/` | Path to static web files |
 | `--lifetime` | `24` | Device entry lifetime in hours |
 | `--verbose` | `false` | Enable debug logging |

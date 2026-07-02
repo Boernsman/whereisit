@@ -22,5 +22,6 @@ COPY whereisit.ini /etc/whereisit.ini
 USER whereisit
 
 EXPOSE 8180
+EXPOSE 8181
 
 CMD ["/app/whereisit"]
